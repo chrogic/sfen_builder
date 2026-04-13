@@ -57,6 +57,10 @@ parse_sfen("4k4/9/4P4/9/9/9/9/9/9 b G2r2b3g4s4n4l17p 1")
 python -m unittest sfen_builder.test.test_sfen_builder -v
 ```
 
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
+
 ## Project Structure
 
 ```
