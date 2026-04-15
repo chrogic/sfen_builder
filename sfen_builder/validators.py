@@ -122,7 +122,7 @@ def _validate(norm_board, norm_sente_hand, tsume):
     for side in ("sente", "gote"):
         for f, cnt in pawn_files[side].items():
             if cnt >= 2:
-                warnings.append(
+                errors.append(
                     f"Double pawn (二歩): {side} file {f} has {cnt} unpromoted pawns."
                 )
 
