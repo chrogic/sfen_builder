@@ -9,8 +9,15 @@ import os
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from sfen_builder import __version__
 from sfen_builder.sfen_builder import build_sfen, parse_sfen
 from sfen_builder.validators import _SHOGI_AVAILABLE
+
+
+class TestPackageMetadata(unittest.TestCase):
+
+    def test_package_version(self):
+        self.assertEqual(__version__, "2.0.0")
 
 
 # ==============================================================================

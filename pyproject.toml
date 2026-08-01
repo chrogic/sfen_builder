@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sfen-builder"
+dynamic = ["version"]
+description = "Build and parse SFEN positions from structured shogi data"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+dependencies = [
+    "python-shogi>=1.1.1",
+]
+
+[project.urls]
+Repository = "https://github.com/chrogic/sfen_builder"
+
+[tool.setuptools.packages.find]
+include = ["sfen_builder*"]
+exclude = ["sfen_builder.test*"]
+
+[tool.setuptools.package-data]
+sfen_builder = ["GUIDE.md"]
+
+[tool.setuptools.dynamic]
+version = { attr = "sfen_builder._version.__version__" }
