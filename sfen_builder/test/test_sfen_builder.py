@@ -1,14 +1,16 @@
 """
-test_sfen_builder.py — SFEN Builderのテストスイート（60テストケース）
+test_sfen_builder.py — SFEN Builderの回帰テストスイート
 標準ライブラリ unittest を使用。
 """
 
 import unittest
 import sys
 import os
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sfen_builder.sfen_builder import build_sfen, parse_sfen
+from sfen_builder.validators import _SHOGI_AVAILABLE
 
 
 # ==============================================================================
@@ -329,27 +331,27 @@ class TestWarnings(unittest.TestCase):
     def _has_warning(self, result, keyword):
         return any(keyword.lower() in w.lower() for w in result["validation"]["warnings"])
 
-    def test_warning_double_pawn_sente(self):
-        """先手の同筋二歩は警告を出してSFENを生成する"""
+    def test_error_double_pawn_sente(self):
+        """先手の同筋二歩はエラーとしてSFEN生成を拒否する"""
         result = build_sfen(board=[
             {"piece": "P", "pos": (5, 4), "side": "sente", "promoted": False},
             {"piece": "P", "pos": (5, 6), "side": "sente", "promoted": False},
             {"piece": "K", "pos": (9, 9), "side": "sente", "promoted": False},
             {"piece": "K", "pos": (9, 1), "side": "gote",  "promoted": False},
         ])
-        self.assertTrue(result["validation"]["ok"])
-        self.assertTrue(self._has_warning(result, "Double pawn"))
+        self.assertFalse(result["validation"]["ok"])
+        self.assertTrue(any("Double pawn" in e for e in result["validation"]["errors"]))
 
-    def test_warning_double_pawn_gote(self):
-        """後手の同筋二歩は警告を出してSFENを生成する"""
+    def test_error_double_pawn_gote(self):
+        """後手の同筋二歩はエラーとしてSFEN生成を拒否する"""
         result = build_sfen(board=[
             {"piece": "P", "pos": (3, 3), "side": "gote", "promoted": False},
             {"piece": "P", "pos": (3, 5), "side": "gote", "promoted": False},
             {"piece": "K", "pos": (9, 9), "side": "sente", "promoted": False},
             {"piece": "K", "pos": (9, 1), "side": "gote",  "promoted": False},
         ])
-        self.assertTrue(result["validation"]["ok"])
-        self.assertTrue(self._has_warning(result, "Double pawn"))
+        self.assertFalse(result["validation"]["ok"])
+        self.assertTrue(any("Double pawn" in e for e in result["validation"]["errors"]))
 
     def test_warning_dead_pawn_sente_rank1(self):
         """先手の歩が1段目は行き所なし警告"""
@@ -447,6 +449,7 @@ class TestTsumeMode(unittest.TestCase):
         self.assertFalse(result["validation"]["ok"])
         self.assertTrue(any("Duplicate" in e for e in result["validation"]["errors"]))
 
+    @unittest.skipUnless(_SHOGI_AVAILABLE, "python-shogi is not installed")
     def test_tsume_error_gote_king_in_check(self):
         """tsume=True: 後手玉に王手がかかっている初形はエラー"""
         # 先手金5二 → 後手玉5一に隣接 = 王手
@@ -460,6 +463,7 @@ class TestTsumeMode(unittest.TestCase):
         self.assertFalse(result["validation"]["ok"])
         self.assertTrue(any("gote's king is in check" in e for e in result["validation"]["errors"]))
 
+    @unittest.skipUnless(_SHOGI_AVAILABLE, "python-shogi is not installed")
     def test_tsume_error_sente_king_in_check(self):
         """tsume=True: 先手玉に王手がかかっている初形はエラー"""
         # 後手金5八 → 先手玉5九に隣接 = 王手
@@ -487,6 +491,98 @@ class TestTsumeMode(unittest.TestCase):
         self.assertTrue(result["validation"]["ok"])
         self.assertNotEqual(result["sfen"], "")
 
+    def test_tsume_without_python_shogi_warns_and_continues(self):
+        """python-shogi不在時は王手検出だけを警告付きでスキップする"""
+        with patch("sfen_builder.core._SHOGI_AVAILABLE", False), patch(
+            "sfen_builder.core.detect_check", return_value=(None, None)
+        ):
+            result = build_sfen(board=[], tsume=True)
+        self.assertTrue(result["validation"]["ok"])
+        self.assertTrue(
+            any("python-shogi is not installed" in w
+                for w in result["validation"]["warnings"])
+        )
+
+
+# ==============================================================================
+# TestInputTypeGuards — ライブラリ境界の型検証
+# ==============================================================================
+class TestInputTypeGuards(unittest.TestCase):
+
+    def _errors(self, **kwargs):
+        return build_sfen(**kwargs)["validation"]["errors"]
+
+    def test_normalized_board_list_succeeds(self):
+        result = build_sfen(board=[
+            {"piece": "K", "pos": [5, 9], "side": "sente", "promoted": False}
+        ])
+        self.assertTrue(result["validation"]["ok"])
+
+    def test_none_board_remains_empty_board(self):
+        self.assertEqual(build_sfen(board=None)["sfen"], build_sfen(board=[])["sfen"])
+
+    def test_json_string_board_is_one_error(self):
+        errors = self._errors(board="[]")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("board must be a list", errors[0])
+
+    def test_dict_board_is_one_error(self):
+        errors = self._errors(board={})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("got 'dict'", errors[0])
+
+    def test_integer_board_is_one_error(self):
+        errors = self._errors(board=123)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("got 'int'", errors[0])
+
+    def test_multiple_non_dict_entries_are_bounded_per_entry(self):
+        errors = self._errors(board=["bad", 123, None])
+        self.assertEqual(len(errors), 3)
+        self.assertTrue(all("must be a dict" in error for error in errors))
+
+    def test_string_sente_hand_is_one_error(self):
+        errors = self._errors(board=[], sente_hand="{}")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("sente_hand must be a dict", errors[0])
+
+    def test_king_in_hand_is_rejected_and_not_echoed(self):
+        for king_name in ("K", "玉", "王"):
+            with self.subTest(king_name=king_name):
+                result = build_sfen(board=[], sente_hand={king_name: 1})
+                self.assertFalse(result["validation"]["ok"])
+                self.assertEqual(result["sente_hand_used"], {})
+                self.assertTrue(any("King" in e for e in result["validation"]["errors"]))
+
+    def test_bool_hand_count_is_rejected_and_not_echoed(self):
+        result = build_sfen(board=[], sente_hand={"P": True})
+        self.assertFalse(result["validation"]["ok"])
+        self.assertEqual(result["sente_hand_used"], {})
+
+    def test_non_bool_promoted_is_rejected(self):
+        errors = self._errors(board=[
+            {"piece": "P", "pos": [5, 5], "side": "sente", "promoted": "false"}
+        ])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("'promoted' must be a bool", errors[0])
+
+    def test_non_bool_tsume_is_rejected(self):
+        errors = self._errors(board=[], tsume="false")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("tsume must be a bool", errors[0])
+
+    def test_move_number_validation(self):
+        for value in (0, -1, True, "2"):
+            with self.subTest(value=value):
+                errors = self._errors(board=[], move_number=value)
+                self.assertEqual(len(errors), 1)
+                self.assertIn("move_number", errors[0])
+
+    def test_move_number_is_emitted(self):
+        result = build_sfen(board="initial", move_number=42)
+        self.assertTrue(result["validation"]["ok"])
+        self.assertTrue(result["sfen"].endswith(" 42"))
+
 
 # ==============================================================================
 # TestParseSfen — parse_sfen テスト（10件）
@@ -500,8 +596,10 @@ class TestParseSfen(unittest.TestCase):
         self.assertEqual(result["turn"], "sente")
         self.assertEqual(result["sente_hand"], {})
         self.assertEqual(result["gote_hand"],  {})
+        self.assertEqual(result["move_number"], 1)
         # 40枚の駒が盤面にあるか確認
         self.assertEqual(len(result["board"]), 40)
+        self.assertIsInstance(result["board"][0]["pos"], list)
 
     def test_parse_turn_b_is_sente(self):
         """手番 'b' は 'sente' に変換される"""
@@ -569,6 +667,78 @@ class TestParseSfen(unittest.TestCase):
         result = parse_sfen("9/9/9/9/9/9/9/9/9 x - 1")
         self.assertTrue(any("turn" in e.lower() or "Invalid" in e for e in result["errors"]))
 
+    def test_parse_error_rank_width_eight_or_ten(self):
+        for first_rank in ("8", "9P"):
+            with self.subTest(first_rank=first_rank):
+                result = parse_sfen(f"{first_rank}/9/9/9/9/9/9/9/9 b - 1")
+                self.assertTrue(any("width" in e.lower() for e in result["errors"]))
+
+    def test_parse_error_invalid_empty_square_notation(self):
+        for first_rank in ("0", "90", "18", "９"):
+            with self.subTest(first_rank=first_rank):
+                result = parse_sfen(f"{first_rank}/9/9/9/9/9/9/9/9 b - 1")
+                self.assertNotEqual(result["errors"], [])
+
+    def test_parse_error_unpromotable_piece(self):
+        for first_rank in ("4+K4", "4+G4"):
+            with self.subTest(first_rank=first_rank):
+                result = parse_sfen(f"{first_rank}/9/9/9/9/9/9/9/9 b - 1")
+                self.assertTrue(any("Cannot promote" in e for e in result["errors"]))
+
+    def test_parse_error_invalid_hand_counts(self):
+        for hand in ("0P", "99P"):
+            with self.subTest(hand=hand):
+                result = parse_sfen(f"9/9/9/9/9/9/9/9/9 b {hand} 1")
+                self.assertNotEqual(result["errors"], [])
+
+    def test_parse_error_king_in_hand(self):
+        for hand in ("K", "k"):
+            with self.subTest(hand=hand):
+                result = parse_sfen(f"9/9/9/9/9/9/9/9/9 b {hand} 1")
+                self.assertTrue(any("King" in e for e in result["errors"]))
+                self.assertEqual(result["sente_hand"], {})
+                self.assertEqual(result["gote_hand"], {})
+
+    def test_parse_error_combined_piece_count_overflow(self):
+        result = parse_sfen(
+            "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/"
+            "1B5R1/LNSGKGSNL b P 1"
+        )
+        self.assertTrue(any("exceeds maximum" in e for e in result["errors"]))
+
+    def test_parse_error_invalid_move_number(self):
+        for move_number in ("0", "-1", "xyz", "１"):
+            with self.subTest(move_number=move_number):
+                result = parse_sfen(
+                    f"9/9/9/9/9/9/9/9/9 b - {move_number}"
+                )
+                self.assertTrue(any("move number" in e.lower() for e in result["errors"]))
+                self.assertEqual(result["move_number"], 0)
+
+    def test_parse_preserves_non_default_move_number(self):
+        result = parse_sfen("9/9/9/9/9/9/9/9/9 w - 42")
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["move_number"], 42)
+
+    def test_parse_error_returns_safe_partial_result(self):
+        result = parse_sfen("8/9/9/9/9/9/9/9/4K4 b P xyz")
+        self.assertNotEqual(result["errors"], [])
+        self.assertEqual(result["sente_hand"], {"P": 1})
+        self.assertEqual(result["board"][0]["pos"], [5, 9])
+        self.assertEqual(result["move_number"], 0)
+
+    def test_parse_oversized_numbers_do_not_raise(self):
+        huge_number = "1" * 5000
+        hand_result = parse_sfen(
+            f"9/9/9/9/9/9/9/9/9 b {huge_number}P 1"
+        )
+        move_result = parse_sfen(
+            f"9/9/9/9/9/9/9/9/9 b - {huge_number}"
+        )
+        self.assertTrue(any("exceeds" in e for e in hand_result["errors"]))
+        self.assertEqual(move_result["errors"], [])
+        self.assertGreater(move_result["move_number"], 1)
+
 
 # ==============================================================================
 # TestRoundTrip — ラウンドトリップテスト（7件）
@@ -584,6 +754,7 @@ class TestRoundTrip(unittest.TestCase):
             board=parsed["board"],
             sente_hand=parsed["sente_hand"],
             turn=parsed["turn"],
+            move_number=parsed["move_number"],
         )
         self.assertEqual(rebuilt["validation"]["errors"], [],
                          f"build_sfen failed: {rebuilt['validation']['errors']}")
@@ -620,6 +791,22 @@ class TestRoundTrip(unittest.TestCase):
     def test_roundtrip_mixed_hand(self):
         """先後両方の持ち駒があるラウンドトリップ"""
         self._round_trip("9/9/9/9/9/9/9/9/9 b 2R2B4G4S4N4L18P 1")
+
+    def test_roundtrip_preserves_move_number_and_components(self):
+        """parse → build → parse で盤面・持駒・手番・手数を保持する"""
+        source = "4k4/9/9/9/9/9/9/9/4K4 w R2G5Pr2b2g4s4n4l13p 42"
+        first = parse_sfen(source)
+        self.assertEqual(first["errors"], [])
+        rebuilt = build_sfen(
+            board=first["board"],
+            sente_hand=first["sente_hand"],
+            turn=first["turn"],
+            move_number=first["move_number"],
+        )
+        self.assertTrue(rebuilt["validation"]["ok"])
+        second = parse_sfen(rebuilt["sfen"])
+        for key in ("board", "sente_hand", "gote_hand", "turn", "move_number"):
+            self.assertEqual(second[key], first[key], key)
 
 
 if __name__ == "__main__":

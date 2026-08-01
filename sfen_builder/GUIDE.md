@@ -9,7 +9,7 @@ from sfen_builder.sfen_builder import build_sfen, parse_sfen  # also works
 
 ---
 
-## `build_sfen(board, sente_hand, turn, tsume) -> dict`
+## `build_sfen(board, sente_hand, turn, tsume, debug, move_number) -> dict`
 
 **You only specify board pieces and sente's hand. gote_hand is always auto-calculated.**
 
@@ -17,20 +17,29 @@ from sfen_builder.sfen_builder import build_sfen, parse_sfen  # also works
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `board` | `list[dict]` or `"initial"` | required | Pieces on the board, or `"initial"` for standard starting position |
+| `board` | `list[dict]`, `"initial"`, or `None` | `None` | Pieces on the board, `"initial"` for the standard position, or `None` for an empty board |
 | `sente_hand` | `dict` | `{}` | Pieces in sente's hand. e.g. `{"G": 1, "P": 3}` |
 | `turn` | `str` | `"sente"` | Who moves next |
 | `tsume` | `bool` | `True` | `True` = tsume-shogi mode (no warning if sente king is absent). `False` = dual-king mode (warns if either king is missing) |
 | `debug` | `bool` | `False` | `True` = print processing logs to stderr. Silent by default. |
+| `move_number` | `int` | `1` | SFEN move number. Must be 1 or greater. Appended after existing parameters for positional-call compatibility. |
 
 ### board entry keys
 
 | Key | Type | Required | Notes |
 |---|---|---|---|
 | `"piece"` | `str` | Yes | Piece name — see table below |
-| `"pos"` | `str` or `tuple` | Yes | Coordinate — see formats below |
+| `"pos"` | `str`, `tuple`, or `list` | Yes | Coordinate — see formats below |
 | `"side"` | `str` | Yes | `"sente"` or `"gote"` |
 | `"promoted"` | `bool` | No (default `False`) | Only R, B, S, N, L, P can be promoted. K and G cannot. |
+
+`board` must be a list before entries are inspected. JSON-encoded strings such as
+`"[]"`, dictionaries, tuples, and numbers are rejected with one top-level error.
+`promoted` and `tsume` are strict booleans; strings such as `"false"` are not coerced.
+
+Hand keys accept the piece aliases below, except kings (`K`, `玉`, `王`, etc.). A hand
+count must be an `int` of at least 1; Python `bool` values are explicitly rejected.
+Invalid hand entries are not included in `sente_hand_used`.
 
 ### Return value
 
@@ -55,12 +64,20 @@ from sfen_builder.sfen_builder import build_sfen, parse_sfen  # also works
 
 ```python
 {
-    "board": list[dict],  # Same format as build_sfen board input
+    "board": list[dict],  # pos is returned as JSON-friendly [file, rank]
     "sente_hand": dict, "gote_hand": dict,
     "turn": str,          # "sente" or "gote"
+    "move_number": int,   # 1+ when valid; 0 sentinel when invalid/unavailable
     "errors": list[str]
 }
 ```
+
+The parser requires exactly four whitespace-separated fields. It validates nine board
+ranks of exactly nine expanded squares, ASCII one-digit empty-square notation (`1`–`9`),
+promotable pieces after `+`, hand syntax and counts, the combined piece inventory, turn,
+and a move number of at least 1. If four fields are present but validation fails, safely
+parsed fields are returned for compatibility; invalid tokens are omitted and `errors`
+must be checked. If the move number is invalid, `move_number` is `0`.
 
 ---
 
@@ -86,6 +103,7 @@ from sfen_builder.sfen_builder import build_sfen, parse_sfen  # also works
 | Letter | `"5a"` | file 1–9, rank a–i (a=1, i=9) |
 | Kanji | `"５一"` | fullwidth digit + kanji numeral |
 | Tuple | `(5, 1)` | (file, rank), both 1–9 |
+| List | `[5, 1]` | JSON-friendly (file, rank), both 1–9 |
 
 file: 1=right, 9=left (from sente's perspective). rank: 1=gote's back rank, 9=sente's back rank.
 
@@ -99,9 +117,9 @@ K=2, R=2, B=2, G=4, S=4, N=4, L=4, P=18. Promoted pieces count as their original
 
 ## Errors vs Warnings
 
-**Errors** (`ok=False`, `sfen=""`): duplicate position, piece count exceeded, illegal promotion (K/G), unknown piece name, invalid coordinate, promoted piece in hand, king in check at start (tsume=True, requires python-shogi).
+**Errors** (`ok=False`, `sfen=""`): invalid top-level types, duplicate position, double pawn (二歩), piece count exceeded, illegal promotion (K/G), unknown piece name, invalid coordinate, non-boolean promotion/tsume flags, promoted piece or king in hand, invalid hand count, invalid move number, king in check at start (tsume=True, requires python-shogi).
 
-**Warnings** (`ok=True`, sfen generated): double pawn (二歩), dead piece (行き所なし), missing king.
+**Warnings** (`ok=True`, sfen generated): dead piece (行き所なし), missing king, or skipped check detection when `python-shogi` is unavailable.
 
 Error messages echo the bad input value and state the valid range — read them to self-correct and retry.
 
@@ -123,9 +141,10 @@ result = build_sfen(
         {"piece": "歩", "pos": "５三", "side": "sente", "promoted": False},
     ],
     sente_hand={"金": 1},
-    turn="sente"
+    turn="sente",
+    move_number=23,
 )
-# result["sfen"] → "4k4/9/4P4/9/9/9/9/9/9 b G2r2b3g4s4n4l17p 1"
+# result["sfen"] → "4k4/9/4P4/9/9/9/9/9/9 b G2r2b3g4s4n4l17p 23"
 ```
 
 ### Dual-king position (tsume=False)
@@ -151,7 +170,12 @@ result = build_sfen(
 ```python
 parsed = parse_sfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1")
 # modify parsed["board"] here
-result = build_sfen(board=parsed["board"], sente_hand=parsed["sente_hand"], turn=parsed["turn"])
+result = build_sfen(
+    board=parsed["board"],
+    sente_hand=parsed["sente_hand"],
+    turn=parsed["turn"],
+    move_number=parsed["move_number"],
+)
 ```
 
 ### Error handling
@@ -169,5 +193,7 @@ if not result["validation"]["ok"]:
 - **Check detection** requires `python-shogi` (`pip install python-shogi`). If not installed, a warning is added and the check is skipped.
 - Never specify `gote_hand` — it is always auto-calculated from the remaining pieces.
 - Pieces in hand are never promoted. `"+R"` in `sente_hand` is an error; use `"R"`.
+- Kings can never be in hand. `"K"`, `"玉"`, and `"王"` are errors in `sente_hand`.
 - `"initial"` is the only accepted string value for `board`. Everything else must be a list.
+- `parse_sfen(...)["errors"]` must be empty before using parsed data as a valid position.
 - `tsume=True` is the default. Use `tsume=False` only when both kings must be present on the board.

@@ -9,7 +9,9 @@ LLMエージェントが将棋局面を扱うことを想定して設計され�
 - 座標の多形式対応（`"5a"` / `"５一"` / `(5, 1)`）
 - 後手持ち駒の自動計算
 - 王手・二歩・行き所なし等のバリデーション
-- SFEN → 構造化データへの逆変換（`parse_sfen`）
+- ライブラリ境界での厳密な入力型チェック（例外ではなく検証結果を返却）
+- SFEN → 構造化データへの厳密な逆変換（`parse_sfen`）
+- SFEN手数（`move_number`）の解析・再生成
 
 ## Requirements
 
@@ -22,7 +24,8 @@ LLMエージェントが将棋局面を扱うことを想定して設計され�
 pip install -r requirements.txt
 ```
 
-python-shogi なしでも基本機能は動作します（王手チェックのみスキップ）。
+`requirements.txt` には `python-shogi` を含みます。未導入環境でも基本機能は動作し、
+王手チェックだけを警告付きでスキップします。
 
 ## Usage
 
@@ -36,18 +39,25 @@ result = build_sfen(
         {"piece": "歩", "pos": "５三", "side": "sente", "promoted": False},
     ],
     sente_hand={"金": 1},
-    turn="sente"
+    turn="sente",
+    move_number=23,
 )
 print(result["sfen"])
-# → 4k4/9/4P4/9/9/9/9/9/9 b G2r2b3g4s4n4l17p 1
+# → 4k4/9/4P4/9/9/9/9/9/9 b G2r2b3g4s4n4l17p 23
 
 # 初期配置
 build_sfen(board="initial")["sfen"]
 # → lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1
 
 # SFENを解析
-parse_sfen("4k4/9/4P4/9/9/9/9/9/9 b G2r2b3g4s4n4l17p 1")
+parsed = parse_sfen("4k4/9/4P4/9/9/9/9/9/9 b G2r2b3g4s4n4l17p 23")
+parsed["move_number"]  # 23
 ```
+
+`board` はリスト（または文字列 `"initial"`）、`sente_hand` は辞書、
+`promoted` と `tsume` は真偽値だけを受け付けます。玉は持駒にできません。
+`parse_sfen` は段幅、空マス表記、成駒、持駒、総駒数、手番、手数を検証し、
+`board[].pos` をJSON親和性の高い `[file, rank]` で返します。
 
 詳細は [`sfen_builder/GUIDE.md`](sfen_builder/GUIDE.md) を参照してください。
 
