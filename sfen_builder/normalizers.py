@@ -71,6 +71,8 @@ def normalize_piece(raw):
     promoted = s.startswith("+")
     key = s[1:].lower() if promoted else s.lower()
     piece = PIECE_ALIASES.get(key)
+    if piece is None:
+        return None, False
     return piece, promoted
 
 

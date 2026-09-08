@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sfen_builder import __version__
 from sfen_builder.sfen_builder import build_sfen, parse_sfen
+from sfen_builder.normalizers import normalize_piece
 from sfen_builder.validators import _SHOGI_AVAILABLE
 
 
@@ -53,6 +54,10 @@ class TestNormalize(unittest.TestCase):
         ])
         self.assertFalse(result["validation"]["ok"])
         self.assertTrue(any("Unknown piece" in e for e in result["validation"]["errors"]))
+
+    def test_normalize_piece_unknown_promoted_returns_failure_tuple(self):
+        """未知の成り駒名は成りフラグを残さず失敗を返す"""
+        self.assertEqual(normalize_piece("+x"), (None, False))
 
     def test_normalize_pos_letter_format(self):
         """座標 "5a" 形式を受け付ける（file=5, rank=a=1 → rank1の先頭セグメントに K が出現）"""
